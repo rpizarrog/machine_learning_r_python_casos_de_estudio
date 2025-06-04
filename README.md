@@ -1,0 +1,2 @@
+# machine_learning_r_python_casos_de_estudio
+Recursos para libro
