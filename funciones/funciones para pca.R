@@ -94,3 +94,33 @@ f_graf_cargas_importantes <- function(cargas, n_componentes = 5, n_vars = 5) {
     theme_minimal() +
     theme(plot.title = element_text(hjust = 0.5, face = "bold"))
 }
+
+# Función para presentar datos en foramto de tablas
+# Se unen los datos hedad y tail
+# Función que une y visualiza los primeros y últimos registros
+f_visualizar_tabla <- function(datos, n_registros = 5) {
+  # Validar que los datos tengan suficientes registros
+  if (nrow(datos) < (n_registros * 2)) {
+    stop("El data.frame es muy pequeño para mostrar head y tail.")
+  }
+  
+  # Obtener los primeros y últimos registros
+  head_df <- head(datos, n_registros)
+  tail_df <- tail(datos, n_registros)
+  
+  # Crear una fila de separación visual
+  separador <- tibble(!!!setNames(rep("...", ncol(datos)), names(datos)))
+  
+  # Unir los data.frames
+  tabla_final <- rbind(head_df, separador, tail_df)
+  
+  # Crear y formatear la flextable
+  flextable(tabla_final) %>%
+    set_caption("Primeros y últimos registros del conjunto de datos") %>%
+    autofit() %>%
+    align(align = "center", part = "all") %>%
+    fontsize(size = 8, part = "all") %>%
+    bold(part = "header") %>%
+    set_table_properties(layout = "autofit") %>%
+    theme_box()
+}
