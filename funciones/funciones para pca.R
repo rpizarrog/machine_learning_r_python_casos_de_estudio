@@ -124,3 +124,48 @@ f_visualizar_tabla <- function(datos, n_registros = 5) {
     set_table_properties(layout = "autofit") %>%
     theme_box()
 }
+
+# Función para graficar todas las combinaciones de 2 componentes
+f_componentes_region <- function(datos, region_col = "region") {
+  
+  # Asegurar que la variable región es factor
+  datos[[region_col]] <- as.factor(datos[[region_col]])
+  
+  # Lista de combinaciones de pares de componentes
+  pares <- combn(c("PC1", "PC2", "PC3", "PC4"), 2, simplify = FALSE)
+  
+  # Generar un gráfico por cada par
+  plots <- lapply(pares, function(par) {
+    ggplot(datos, aes_string(x = par[1], y = par[2], color = region_col)) +
+      geom_point(size = 3, alpha = 0.7) +
+      labs(title = paste("PCA:", par[1], "vs", par[2])) +
+      theme_minimal()
+  })
+  
+  # Organizar todos los gráficos en una cuadrícula
+  grid.arrange(grobs = plots, ncol = 2)
+}
+
+# Función para identificar posibles diferencias entre componentes y variabel categórica
+# datos_redimensionados debe contener columnas: region, PC1, PC2, PC3, PC4
+f_diagramas_caja_componentes_region <- function(datos_redimensionados,
+                                                region_col = "region",
+                                                comp_cols = c("PC1","PC2","PC3","PC4"),
+                                                ncol = 2) {
+  # Asegurar factor
+  datos_redimensionados[[region_col]] <- as.factor(datos_redimensionados[[region_col]])
+  
+  # Generar un boxplot por cada componente
+  plots <- lapply(comp_cols, function(pc) {
+    ggplot(datos_redimensionados, aes_string(x = region_col, y = pc, fill = region_col)) +
+      geom_boxplot() +
+      labs(title = paste("Distribución de", pc, "por Región"),
+           x = "Región", y = pc) +
+      theme_minimal() +
+      theme(legend.position = "none")
+  })
+  
+  # Organizar en cuadrícula (2x2 por defecto)
+  grid.arrange(grobs = plots, ncol = ncol)
+}
+
