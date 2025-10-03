@@ -1,6 +1,55 @@
 # Autor: Rubén Pizarro Gurrola, soporte IAG
 # 2025
 # Funciones para el caso LDA
+
+# Función para cargar datos de una url local o internet
+f_cargar_datos <- function (url){
+  datos <- read.csv(url)
+  return (datos)
+}
+
+# Función para presentar datos en formato de tablas
+# Se unen los datos head y tail
+# Función que une y visualiza los primeros y últimos registros
+f_visualizar_tabla <- function(datos, n_registros = 5) {
+  # Validar que los datos tengan suficientes registros
+  if (nrow(datos) < (n_registros * 2)) {
+    stop("El data.frame es muy pequeño para mostrar head y tail.")
+  }
+  
+  # Obtener los primeros y últimos registros
+  head_df <- head(datos, n_registros)
+  tail_df <- tail(datos, n_registros)
+  
+  # Dos posiciones decimales
+  head_df <- head_df %>%
+    mutate(across(where(is.numeric), ~ round(., 2)))
+  
+  tail_df <- tail_df %>%
+    mutate(across(where(is.numeric), ~ round(., 2)))
+  
+  # Crear una fila de separación visual
+  separador <- tibble(!!!setNames(rep("...", ncol(datos)), names(datos)))
+  
+  # Unir los data.frames
+  tabla_final <- rbind(head_df, separador, tail_df)
+  
+  
+  
+  # Crear y formatear la flextable
+  flextable(tabla_final) %>%
+    set_caption("Primeros y últimos registros del conjunto de datos") %>%
+    colformat_num(digits = 2) %>%   # redondea todas las columnas numéricas a 2 decimales
+    autofit() %>%
+    align(align = "center", part = "all") %>%
+    fontsize(size = 8, part = "all") %>%
+    bold(part = "header") %>%
+    set_table_properties(layout = "autofit") %>%
+    theme_box()
+}
+
+
+
 # Función para constuir modelo LDA
 # rercibe datos limpios
 # depura el atributo clase
@@ -66,6 +115,182 @@ f_construir_LDA <- function(datos) {
   )
   return(resultado)
 }
+
+
+
+# función para visualizar tabla de dos dimensiones
+# Visualzia la dispersi´kn de los datos dos dimensiones en relación a la clase
+f_dispersion_dimensiones_LDA <- function(dimensiones, etiquetar_id = FALSE) {
+  req <- c("D1", "D2", "clase")
+  if (!all(req %in% names(dimensiones))) {
+    stop("El data.frame debe contener 'D1', 'D2' y 'clase'.")
+  }
+  
+  suppressPackageStartupMessages(require(ggplot2))
+  
+  # paleta
+  pal <- c("Sano" = "green", "Enfermo" = "red", "Riesgo" = "yellow")
+  # fallback para clases no previstas
+  clases <- unique(dimensiones$clase)
+  missing_cols <- setdiff(clases, names(pal))
+  if (length(missing_cols) > 0) {
+    extra <- scales::hue_pal()(length(missing_cols))
+    names(extra) <- missing_cols
+    pal <- c(pal, extra)
+  }
+  
+  p <- ggplot(dimensiones, aes(x = D1, y = D2, color = clase)) +
+    geom_point(size = 2.5, alpha = 0.85, stroke = 0.3) +
+    scale_color_manual(values = pal) +
+    labs(
+      title = "Proyección en dos dimensiones (LDA + eje ortogonal)",
+      x = "Dimensión 1 (LDA)",
+      y = "Dimensión 2 (PCA ortogonal a w)",
+      color = "Clase"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      panel.grid.minor = element_blank(),
+      legend.position = "top"
+    )
+  
+  if (etiquetar_id && "id" %in% names(dimensiones)) {
+    if (!requireNamespace("ggrepel", quietly = TRUE)) {
+      warning("Para etiquetas usa ggrepel::geom_text_repel; instala 'ggrepel'.")
+    } else {
+      p <- p + ggrepel::geom_text_repel(aes(label = id), size = 3, max.overlaps = 50)
+    }
+  }
+  
+  print(p)
+  invisible(p)
+}
+
+
+# ---------------------------------------------
+# f_fisher_razon(datos)
+# Calcula la razón de Fisher J = (w' S_B w) / (w' S_W w)
+# - datos: data.frame con columnas numéricas predictoras y una columna 'clase'
+# - Escala solo las variables numéricas
+# - Usa el primer discriminante lineal (LD1) como w
+# Devuelve: lista con numerador, denominador y razon_fisher
+# ---------------------------------------------
+f_fisher_razon <- function(datos) {
+  if (!("clase" %in% names(datos))) {
+    stop("El data.frame debe contener la columna 'clase'.")
+  }
+  # Seleccionar solo numéricas
+  num_mask <- sapply(datos, is.numeric)
+  num_mask["clase"] <- FALSE
+  if (!any(num_mask)) stop("No hay variables numéricas en 'datos' además de 'clase'.")
+  
+  X <- as.matrix(datos[, num_mask, drop = FALSE])
+  y <- as.factor(datos$clase)
+  clases <- levels(y)
+  p <- ncol(X)
+  
+  # Escalar (media 0, sd 1)
+  Xs <- scale(X)
+  
+  # Medias
+  mu_global <- colMeans(Xs)
+  medias <- lapply(clases, function(cl) colMeans(Xs[y == cl, , drop = FALSE]))
+  names(medias) <- clases
+  
+  # SW: dispersión dentro de clases
+  SW <- matrix(0, nrow = p, ncol = p)
+  for (cl in clases) {
+    Xc <- Xs[y == cl, , drop = FALSE]
+    Mc <- sweep(Xc, 2, medias[[cl]], FUN = "-")
+    SW <- SW + t(Mc) %*% Mc
+  }
+  
+  # SB: dispersión entre clases
+  SB <- matrix(0, nrow = p, ncol = p)
+  for (cl in clases) {
+    nk <- sum(y == cl)
+    diff <- (medias[[cl]] - mu_global)
+    SB <- SB + nk * (matrix(diff, ncol = 1) %*% matrix(diff, nrow = 1))
+  }
+  
+  # LDA para obtener w (primer discriminante)
+  fit <- lda(x = Xs, grouping = y)
+  # 'scaling' es matriz p x k; tomamos la 1a columna (LD1)
+  w <- matrix(fit$scaling[, 1], ncol = 1)
+  
+  numerador   <- as.numeric(t(w) %*% SB %*% w)
+  denominador <- as.numeric(t(w) %*% SW %*% w)
+  J <- numerador / denominador
+  
+  list(
+    numerador = numerador,
+    denominador = denominador,
+    razon_fisher = J
+  )
+}
+
+# ---------------------------------------------
+# f_matriz_confusion_LDA(datos)
+# Ajusta LDA (con variables numéricas escaladas), predice y construye:
+# - Matriz de confusión
+# - Métricas básicas por clase: precision, recall, F1
+# - Accuracy global
+# Devuelve una lista con la matriz de confusión y las métricas
+# ---------------------------------------------
+f_matriz_confusion_LDA <- function(datos) {
+  if (!("clase" %in% names(datos))) {
+    stop("El data.frame debe contener la columna 'clase'.")
+  }
+  # Seleccionar solo numéricas
+  num_mask <- sapply(datos, is.numeric)
+  num_mask["clase"] <- FALSE
+  if (!any(num_mask)) stop("No hay variables numéricas en 'datos' además de 'clase'.")
+  
+  X <- as.matrix(datos[, num_mask, drop = FALSE])
+  y <- as.factor(datos$clase)
+  niveles <- levels(y)
+  
+  # Escalar
+  Xs <- scale(X)
+  
+  # Modelo LDA
+  fit <- lda(x = Xs, grouping = y)
+  pred <- predict(fit, Xs)$class
+  
+  # Matriz de confusión (orden consistente con niveles)
+  cm <- table(Real = y, Pred = factor(pred, levels = niveles))
+  
+  # Accuracy
+  acc <- sum(diag(cm)) / sum(cm)
+  
+  # Métricas por clase (precision, recall, F1)
+  # precision_c = TP / (TP + FP), recall_c = TP / (TP + FN)
+  métricas <- lapply(niveles, function(cl) {
+    TP <- cm[cl, cl]
+    FP <- sum(cm[, cl]) - TP
+    FN <- sum(cm[cl, ]) - TP
+    precision <- if ((TP + FP) == 0) NA else TP / (TP + FP)
+    recall    <- if ((TP + FN) == 0) NA else TP / (TP + FN)
+    F1 <- if (is.na(precision) || is.na(recall) || (precision + recall) == 0) NA else 2 * precision * recall / (precision + recall)
+    c(precision = precision, recall = recall, F1 = F1)
+  })
+  métricas <- do.call(rbind, métricas)
+  rownames(métricas) <- niveles
+  
+  cat("\nMatriz de Confusión:\n")
+  print(cm)
+  cat(sprintf("\nExactitud global (Accuracy): %.4f\n", acc))
+  cat("\nMétricas por clase (precision, recall, F1):\n")
+  print(round(métricas, 4))
+  
+  invisible(list(
+    matriz_confusion = cm,
+    accuracy = acc,
+    metricas = métricas,
+    niveles = niveles
+  ))
+}
+
 
 # ---------------------------------------------
 # f_construir_LDA_de_mas_valores_en_clase(datos, devolver_modelos=FALSE)
