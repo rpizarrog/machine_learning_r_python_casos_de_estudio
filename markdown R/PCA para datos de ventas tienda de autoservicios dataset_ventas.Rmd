@@ -1,0 +1,524 @@
+---
+title: "PCA de datos ventas de tienda de autoservicio"
+author: "RUBEN PIZARRO GURROLA"
+date: "2025-08-25"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+# Objetivo
+
+Aplicar reducción de dimensionalidad mediante modelo de análisis de componentes principales (PCA) en un conjunto de datos ventas de autoservicio.
+
+# Cargar librerías
+
+```{r message=FALSE, warning=FALSE}
+library(readr) # Para importar y exportar datos
+library(ggplot2) # Para gráficos
+library(dplyr) # Para procesar:filtrar, seleccionar, modificar..
+# library(FactoMineR)
+# library(factoextra)
+library(knitr) # Para generar tablas
+library(kableExtra) # Para modificar tablas HTML
+library(flextable) # Para modificar tablas para word
+ 
+library(tidyr) # Para formatear y tratar datos
+
+library(gridExtra) # Graficos
+library(factoextra) #Gráficos
+
+
+library(reshape2) # Para gráficos
+
+```
+
+
+# Cargar funciones
+
+Se cargan las funciones que se utilizan en el caso
+
+```{r}
+
+
+source ("https://raw.githubusercontent.com/rpizarrog/machine_learning_r_python_casos_de_estudio/refs/heads/main/funciones/funciones%20para%20pca.R")
+
+
+```
+
+
+Las funciones
+```{r}
+# Funciones para PCA
+# Agosto 2025
+# Rubén Pizarro Gurrola
+# Función para cargar datos de una url local o internet
+f_cargar_datos <- function (url){
+  datos <- read.csv(url)
+  return (datos)
+}
+
+# Función para presentar datos a manera de tablas
+# Recibe los datos y el tipo de registros head o tail default son 10
+f_datos_tablas <- function(datos, tipo = 'head', decimales = 2) {
+  # Crear tabla con los primeros 10 registros 
+  if (tipo == 'head') {
+    tabla <- as.data.frame(head(datos, 10,) %>%
+                             round(decimales))
+    # Crear y formatear la flextable
+    flextable(tabla) %>%
+      autofit() %>% # Ajusta automáticamente el ancho de columnas
+      align(align = "center", part = "all") %>%  # Centra el contenido
+      fontsize(size = 4, part = "all") %>%      # Tamaño de fuente
+      bold(part = "header") %>%        # Negrita en el encabezado
+      set_table_properties(layout = "autofit") %>%  # Ajuste automático para Word
+      theme_box() %>%                  # Tema con bordes
+      set_caption("Primeros registros de ventas")  # Título de la tabla
+    
+  } else {
+    tabla <- as.data.frame(tail(datos, 10) %>%
+                             round(decimales))
+    # Crear y formatear la flextable
+    flextable(tabla) %>%
+      autofit() %>% # Ajusta automáticamente el ancho de columnas
+      align(align = "center", part = "all") %>%  # Centra el contenido
+      fontsize(size = 4, part = "all") %>%      # Tamaño de fuente
+      bold(part = "header") %>%        # Negrita en el encabezado
+      set_table_properties(layout = "autofit") %>%  # Ajuste automático para Word
+      theme_box() %>%                  # Tema con bordes
+      set_caption("Últimos registros de ventas")  # Título de la tabla
+  }
+  
+}
+
+
+# Función para analizar cada componente
+f_analizar_componente <- function(cargas, componente_num, n_vars = 5) {
+  componente <- paste0("PC", componente_num)
+  
+  # Ordenar variables por importancia absoluta
+  vars_importantes <- cargas %>%
+    select(Variable, all_of(componente)) %>%
+    mutate(Magnitud = abs(.[[2]])) %>%
+    arrange(desc(Magnitud)) %>%
+    head(n_vars)
+  rownames(vars_importantes) <- NULL
+  return(vars_importantes)
+}
+
+# Función para gráficos de variables importantes de un PCA
+# Recibe las cargas del pca con su varianza explicada de cada # variable de cada componente de las cuales representa las 
+# principales variables de cada componente
+# Por default 5 componentes 5 variables 
+# aunque puede ser variar
+f_graf_cargas_importantes <- function(cargas, n_componentes = 5, n_vars = 5) {
+  # Seleccionar dinámicamente los componentes (PC1, PC2, ..., PCn)
+  componentes <- paste0("PC", 1:n_componentes)
+  
+  cargas_abs <- cargas %>%
+    select(Variable, all_of(componentes)) %>%
+    pivot_longer(
+      cols = -Variable,
+      names_to = "Componente",
+      values_to = "Loading"
+    ) %>%
+    group_by(Componente) %>%
+    mutate(Magnitud = abs(Loading)) %>%
+    slice_max(order_by = Magnitud, n = n_vars, with_ties = FALSE) %>%
+    ungroup()
+  
+  # Gráfico
+  ggplot(cargas_abs, aes(x = reorder(Variable, Loading), y = Loading, fill = Loading)) +
+    geom_bar(stat = "identity") +
+    scale_fill_gradient2(
+      low = "red", mid = "white", high = "blue",
+      midpoint = 0, name = "Contribución"
+    ) +
+    facet_wrap(~Componente, scales = "free_y") +
+    coord_flip() +
+    labs(
+      title = "Variables más importantes por Componente Principal",
+      subtitle = paste("Top", n_vars, "variables por cada componente"),
+      x = "Variables",
+      y = "Loading (Contribución)"
+    ) +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+}
+
+# Función para presentar datos en foramto de tablas
+# Se unen los datos hedad y tail
+# Función que une y visualiza los primeros y últimos registros
+f_visualizar_tabla <- function(datos, n_registros = 5) {
+  # Validar que los datos tengan suficientes registros
+  if (nrow(datos) < (n_registros * 2)) {
+    stop("El data.frame es muy pequeño para mostrar head y tail.")
+  }
+  
+  # Obtener los primeros y últimos registros
+  head_df <- head(datos, n_registros)
+  tail_df <- tail(datos, n_registros)
+  
+  # Crear una fila de separación visual
+  separador <- tibble(!!!setNames(rep("...", ncol(datos)), names(datos)))
+  
+  # Unir los data.frames
+  tabla_final <- rbind(head_df, separador, tail_df)
+  
+  # Crear y formatear la flextable
+  flextable(tabla_final) %>%
+    set_caption("Primeros y últimos registros del conjunto de datos") %>%
+    autofit() %>%
+    align(align = "center", part = "all") %>%
+    fontsize(size = 8, part = "all") %>%
+    bold(part = "header") %>%
+    set_table_properties(layout = "autofit") %>%
+    theme_box()
+}
+
+# Función para graficar todas las combinaciones de 2 componentes
+f_componentes_region <- function(datos, region_col = "region") {
+  
+  # Asegurar que la variable región es factor
+  datos[[region_col]] <- as.factor(datos[[region_col]])
+  
+  # Lista de combinaciones de pares de componentes
+  pares <- combn(c("PC1", "PC2", "PC3", "PC4"), 2, simplify = FALSE)
+  
+  # Generar un gráfico por cada par
+  plots <- lapply(pares, function(par) {
+    ggplot(datos, aes_string(x = par[1], y = par[2], color = region_col)) +
+      geom_point(size = 3, alpha = 0.7) +
+      labs(title = paste("PCA:", par[1], "vs", par[2])) +
+      theme_minimal()
+  })
+  
+  # Organizar todos los gráficos en una cuadrícula
+  grid.arrange(grobs = plots, ncol = 2)
+}
+
+# Función para identificar posibles diferencias entre componentes y variabel categórica
+# datos_redimensionados debe contener columnas: region, PC1, PC2, PC3, PC4
+f_diagramas_caja_componentes_region <- function(datos_redimensionados,
+                                                region_col = "region",
+                                                comp_cols = c("PC1","PC2","PC3","PC4"),
+                                                ncol = 2) {
+  # Asegurar factor
+  datos_redimensionados[[region_col]] <- as.factor(datos_redimensionados[[region_col]])
+  
+  # Generar un boxplot por cada componente
+  plots <- lapply(comp_cols, function(pc) {
+    ggplot(datos_redimensionados, aes_string(x = region_col, y = pc, fill = region_col)) +
+      geom_boxplot() +
+      labs(title = paste("Distribución de", pc, "por Región"),
+           x = "Región", y = pc) +
+      theme_minimal() +
+      theme(legend.position = "none")
+  })
+  
+  # Organizar en cuadrícula (2x2 por defecto)
+  grid.arrange(grobs = plots, ncol = ncol)
+}
+```
+
+# Cargar datos
+
+```{r message=FALSE, warning=FALSE}
+url <- "https://raw.githubusercontent.com/rpizarrog/machine_learning_r_python_casos_de_estudio/refs/heads/main/datos/dataset_ventas.csv"
+datos_originales <- f_cargar_datos(url)
+```
+
+
+# Explorar datos
+
+## Descripción de los datos
+
+```{r}
+summary(datos_originales)
+```
+
+```{r}
+str(datos_originales)
+```
+
+## Primeros registros
+
+
+Utilizando la función previamente preparada *f_datos_tablas()* se construye una tabla con los registros indicados, los primeros *'head'* o los últimos *'tail'* del conjunto de datos. Se muestran únicamente los datos numéricos a dos posiciones decimales.
+
+```{r tab.cap="Primeros registros de ventas"}
+
+# Crear tabla con los primeros 10 registros (excluyendo región)
+f_datos_tablas(datos_originales[ , !(names(datos_originales) %in% "region")], 'head')
+
+```
+
+## Últimos registros
+
+Únicamente los datos numéricos a dos posiciones decimales.
+
+```{r tab.cap="Últimos registros de ventas"}
+# Crear tabla con los primeros 10 registros (excluyendo región)
+f_datos_tablas(datos_originales[ , !(names(datos_originales) %in% "region")], 'tail')
+
+```
+
+# Escalar datos
+
+## Datos numéricos
+
+Seleccionar solo los atributos que son numéricos: 
+
+-   *'ventas_totales, 'clientes', 'ticket_promedio', 'productos_vendidos', 'ventas_online', 'ventas_tienda', 'gastos_operativos', 'publicidad', 'inventario', 'personal', 'descuentos', 'competencia_precios', 'satisfaccion_clientes', 'dias_festivos'*
+
+-   No incluye el atributo '*region*'
+
+```{r}
+datos_numericos <- datos_originales %>%
+  select ('ventas_totales',         'clientes', 'ticket_promedio', 'productos_vendidos', 'ventas_online', 'ventas_tienda', 'gastos_operativos', 'publicidad', 'inventario', 'personal', 'descuentos',           'competencia_precios', 'satisfaccion_clientes', 'dias_festivos')
+```
+
+## Escalar datos
+
+A partir de solo los datos numéricos se deben escalar los datos con la función *scale()*; esta función es propia de los paquetes de R.
+
+```{r}
+datos_escalados <- scale(datos_numericos)
+```
+
+## Primeros registros datos escalados
+
+Únicamente los datos numéricos escalados a cuatro posiciones decimales.
+
+```{r tab.cap="Primeros registros de ventas escalados"}
+
+f_datos_tablas(datos_escalados, 'head',4)
+```
+
+## Últimos registros datos escalados
+
+Únicamente los datos numéricos escalados a cuatro posiciones decimales.
+
+```{r tab.cap="Últimos registros de ventas escalados"}
+f_datos_tablas(datos_escalados, 'tail',4)
+
+```
+
+
+# Modelo PCA
+
+Con la función *prcomp()* de la librería base de R, específicamente al paquete *stat*, se construye el modelo PCA con los datos escalados. 
+
+```{r}
+# Aplicar PCA
+pca_resultado <- prcomp(datos_escalados, center = TRUE, scale. = TRUE)
+```
+
+## Autovalores
+
+Con la variable *pca_resultado* se visualizan en modo consola los autovalores.
+
+```{r}
+# Extraer resultados
+autovalores <- pca_resultado$sdev^2
+print(autovalores)
+
+```
+
+## Autovectores
+
+Con la variable *pca_resultado* se visualizan en modo consola los autovectores.
+```{r}
+autovectores <- pca_resultado$rotation
+print(autovectores)
+```
+
+
+## Varianza explicada y acumulada
+
+Se calcula la varianza explicada y la varianza acumulada a partir de los autovalores y autovectores.
+
+```{r}
+varianza_explicada <- autovalores / sum(autovalores)
+print("Varianza explicada por componente:")
+print(varianza_explicada)
+
+varianza_acumulada <- cumsum(varianza_explicada)
+cat("\n")   # Salto de linea en consola
+print("Varianza acumulada de componentes:")
+print(varianza_acumulada)
+```
+
+
+## Resultados 
+
+Se construye una tabla de la varianza explicada y acumulada.
+
+```{r}
+# Crear dataframe con los resultados
+resultados_pca <- data.frame(
+  Componente = paste0("PC", 1:length(autovalores)),
+  Autovalor = autovalores,
+  Varianza_Individual = varianza_explicada * 100,
+  Varianza_Acumulada = varianza_acumulada * 100
+)
+
+  # resultados_pca
+
+  flextable(resultados_pca) %>%
+    autofit() %>% # Ajusta automáticamente el ancho de columnas
+    align(align = "center", part = "all") %>%  # Centra el contenido
+    fontsize(size = 9, part = "all") %>%      # Tamaño de fuente
+    bold(part = "header") %>%        # Negrita en el encabezado
+    set_table_properties(layout = "autofit") %>%  # Ajuste automático para Word
+  theme_box() %>%                  # Tema con bordes
+  set_caption("Varianza explicada y acumulada por componente")  # Título de la tabla
+```
+## Variables importanes de cada componente
+
+Con la función precodificada *f_analizar_componente()* se enlistan las cinco principales variables que tienen carga absoluta sobre el componente específico, se identifican solo los primeros cinco componentes por la varianza acumulada del *83%*.
+
+```{r}
+# ANÁLISIS DE VARIABLES POR COMPONENTE
+
+
+
+# Analizar los primeros 5 componentes
+print("==================================================")
+print("ASOCIACIÓN DE VARIABLES POR COMPONENTE PRINCIPAL")
+print("==================================================")
+
+# Obtener loadings (autovectores)
+cargas <- as.data.frame(pca_resultado$rotation)
+cargas$Variable <- rownames(cargas)
+
+for(i in 1:5) {
+  print(paste0("COMPONENTE PC", i, ":"))
+  print("----------------------------------------")
+  
+  vars_componente <- f_analizar_componente(cargas, i, 5)
+  print(vars_componente)
+}
+
+```
+
+## Gráfico de variables y componentes
+
+El gráfico siguiente se interpreta de la sigueinte manera: los cuadros reflejan las variables que mas se asocian a cada componente, por ejemplo:
+
+Para el componente *1*, las variables *ventas_totales*, *inventario*, *ventas_tienda*, *gastos_operativos* y *publicidad* son las que mayor relación tienen con ese componente con valores negativos pero en magnitud absoluta alrededor de *0.3* todas ellas. 
+
+Para el componente *2* las variables *ticket_promedio * con valor de *-0.82* y *clientes  * con *0.52* son las que mas se asocian a dicho componente.
+
+El componente 3, las variables que más se relacionan son *satisfaccion_clientes* con valor aproximado de *0.60* y *dias_festivos* alrededor de  *-0.58*.
+
+El componente *4*, se relaciona de manera importante con las variables *competencia_precios* *0.80* y *dias_festivos* con *0.57*.
+
+El componente *5*, se asocia a las variables de manera importante con  *satisfaccion_clientes* *-0.76* y *dias_festivos* con *-0.57*.
+
+
+
+ 
+
+
+
+
+
+ 
+
+```{r grafico_loadings, fig.width=10, fig.height=8, out.width="90%", dpi=300}
+# Gráfico de variables importantes para los primeros 5 componentes
+
+
+f_graf_cargas_importantes(cargas, 5, 5)
+
+```
+
+## Correlación de variables y componentes
+
+Aquí se observa la correlación de los autovectores con cada componente de manera visual a través de mapa de calor.
+
+```{r}
+# Calcular correlación entre variables originales y componentes
+correlaciones <- sweep(pca_resultado$rotation, 2, pca_resultado$sdev, FUN = "*")
+
+# Ver la matriz de correlaciones
+print(correlaciones)
+
+# Convertir matriz a data.frame largo
+df_cor <- melt(correlaciones, varnames = c("Variable", "Componente"), value.name = "Correlacion")
+
+# Graficar heatmap
+ggplot(df_cor, aes(x = Componente, y = Variable, fill = Correlacion)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal() +
+  labs(title = "Correlación Variables vs Componentes",
+       x = "Componentes Principales", y = "Variables")
+
+
+```
+
+## Datos reducidos
+
+Con el siguiente código se generan los datos redimensionados a partir de la variable ya conocida  *pca_resultado* con cuatro componentes.
+
+Al conjunto de datos *datos_redimensionados* con cuatro dimension, se le agrega el atributo de region de los datos originales.
+
+Usando función *flextable(head(datos_redimensionados))* lo que modifica a los primeros y últimos registros es precisamente *head()* y *tail()*.
+```{r warning=FALSE, message=FALSE}
+# Tomar los datos redimensionados y dejar 4 componentes
+datos_redimensionados <- as.data.frame(pca_resultado$x[, 1:4])
+names(datos_redimensionados) <- c("PC1", "PC2", "PC3", "PC4")
+
+# (Opcional) Adjuntar identificador de fila y/o columnas no numéricas útiles (p. ej. region)
+datos_redimensionados <- round(datos_redimensionados, 4)
+if ("region" %in% names(datos_originales)) {
+  datos_redimensionados <- bind_cols(datos_originales %>% select(region), datos_redimensionados)
+}
+
+# Primeros y Últimos registros
+
+# Mandar llamar la función para visualziar los primeros y últimos registros
+f_visualizar_tabla(datos_redimensionados)
+
+```
+
+# Interpretación
+
+Para dar un agregado a la interpretación del modelo *PCA* que se le da usando *Python*, con los datos redimensionados en *R*, se generan dos gráficos tratando de encontrar algunos patrones con relación a cada componente y la variable categórica llamada *region*.
+
+
+## Visualizar componentes por región 
+
+Con los datos redimensionados y con el atributo *region* se generan las seis posibles combinaciones para comparar si existen grupos significativos de acuerdo con pares de componentes.
+
+En la gráfica se observa que no hay patrones importantes en cada componente de acuerdo a la región.
+
+Se utiliza la función *f_componentes_region()* para visualizar las comparaciones:
+
+```{r warning=FALSE, message=FALSE}
+
+# Uso de la función
+f_componentes_region(datos_redimensionados)
+
+```
+
+## Diferencias sigificativas
+
+Al observar visualmente los diagramas de cajas no se identifica que existan diferencias o patrones importantes entre las regiones y los cuatro componentes; sin embargo para lograr significancias estadísticamente hablando habrá que hacer pruebas tal vez comi prueba *ANOVA* o prueba de *Kruskall Wallis* dependiente de si los datos provienen de una distribución normal o no. 
+
+Esto último de pruebas de diferencias estadísticas, queda fuera de este libro pero se deja a manera de interpretación para una importante discusión y conclusión.
+
+```{r warning=FALSE, message=FALSE}
+
+
+# Usando la función
+f_diagramas_caja_componentes_region(datos_redimensionados)
+
+
+```
+
+
+
