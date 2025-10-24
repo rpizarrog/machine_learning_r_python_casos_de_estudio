@@ -1,0 +1,359 @@
+---
+title: "LDA datos de clietnes de aseguradora"
+author: "RUBEN PIZARRO GURROLA"
+date: "2025-09-23"
+output: word_document
+---
+
+# Inicializar datos
+
+```{r}
+datos <- data.frame(
+  id = 1:10,
+  edad = c(25,28,32,29,35,50,55,60,48,52),
+  ingresos = c(15000,18000,20000,16000,21000,28000,30000,35000,27000,29000),
+  hijos = c(0,1,2,1,2,3,2,4,3,2),
+  gastos_medicos = c(2000,2500,3000,2200,3100,6000,7000,8000,5500,6200),
+  ejercicio = c(6,5,3,4,2,1,0,1,2,0),
+  imc = c(22,24,27,23,28,30,31,29,28,32),
+  clase = factor(c("Joven","Joven","Joven","Joven","Joven","Mayor","Mayor","Mayor","Mayor","Mayor"))
+)
+
+
+datos
+
+```
+
+# Datos numéricos y factor Clase
+
+```{r}
+# Matriz de variables numéricas (en el orden indicado)
+X <- as.matrix(datos[, c("edad","ingresos","hijos","gastos_medicos","ejercicio","imc")])
+clase <- datos$clase
+niveles <- levels(clase)   # c("Joven", "Mayor")
+d <- ncol(X)               # número de variables (6)
+
+```
+
+# Medias aritméticas por clase
+
+```{r}
+# Lista de medias por clase (cada elemento es un vector de longitud d)
+mu_por_clase <- lapply(niveles, function(k) colMeans(X[clase == k, , drop = FALSE]))
+names(mu_por_clase) <- niveles
+
+mu_por_clase
+# $Joven: c(29.8, 18000, 1.2, 2560, 4.0, 24.8)
+# $Mayor: c(53.0, 29800, 2.8, 6540, 0.8, 30.0)
+
+```
+
+# Matriz Sw por clase
+
+A través del ciclo se obtiene la matriz de desviaciones $S_w$.
+
+-   Centrar *Mk*: se resta las medias de la clase y queda las desviaciones internas.
+-   Producto \*t(Mk) % SIMBOLO \*\*% Mk \*: convierte esas desviaciones en una matriz de sumas de cuadrados y productos cruzados
+-   Acumular *(SW)*: se van sumando los resultados de todas las clases para construir.
+
+La salida en modo consola de la matriz $S_w$:
+
+```{r}
+SW <- matrix(0, nrow = d, ncol = d)
+
+for (k in niveles) {
+  Xk <- X[clase == k, , drop = FALSE]          # submatriz de la clase k (n_k x d)
+  mu_k <- mu_por_clase[[k]]                     # vector de medias de la clase k (long d)
+  Mk <- sweep(Xk, 2, mu_k, FUN = "-")           # centrar: Xk - mu_k (n_k x d)
+  SW <- SW + t(Mk) %*% Mk                       # scatter de clase y suma
+}
+
+# Mostrar con redondeo
+round(SW, 2)
+
+```
+
+# Calcular SB
+
+```{r}
+cols <- c("edad","ingresos","hijos","gastos_medicos","ejercicio","imc")  # orden deseado
+X <- as.matrix(datos[, cols])     # matriz numérica N x d
+clase <- datos$clase              # factor de clases
+niveles <- levels(clase)          # niveles de clase (p.ej., "Joven", "Mayor")
+d <- ncol(X)                      # número de variables (d)
+
+# --- 3) Media global ---
+mu_global <- colMeans(X)          # vector (long d) con medias globales
+
+# --- 4) Construcción de S_B según: S_B = sum_k n_k * (mu_k - mu)(mu_k - mu)^T ---
+SB <- matrix(0, nrow = d, ncol = d)         # inicializa matriz d x d en ceros
+
+for (k in niveles) {                        # recorre cada clase k
+  Xk <- X[clase == k, , drop = FALSE]       # submatriz de la clase k (n_k x d)
+  mu_k <- colMeans(Xk)                      # medias por clase (vector long d)
+  nk <- nrow(Xk)                            # tamaño de la clase k
+  diff <- matrix(mu_k - mu_global, ncol = 1)  # vector columna (d x 1) con (mu_k - mu)
+  SB <- SB + nk * (diff %*% t(diff))        # acumula n_k * producto exterior (d x d)
+}
+
+SB
+```
+
+# Medias por clase
+
+```{r}
+# Medias por clase
+muJ <- colMeans(X[clase=="Joven", , drop=FALSE])
+muM <- colMeans(X[clase=="Mayor", , drop=FALSE])
+d <- muM - muJ   # vector diferencia de media
+d
+```
+
+# Solucuión del sistemas de ecuaciones para $S_{w}W$
+
+```{r}
+# Resolver el sistema
+w <- solve(SW, d)   # w = SW^{-1} d
+cat("\nSolución w (sin normalizar):\n")
+print(round(w, 6))
+
+# Normalizar w
+w_norm <- w / sqrt(sum(w^2))
+cat("\nVector w normalizado (||w||=1):\n")
+print(round(w_norm, 4))
+
+```
+
+# Razón de Fisher
+
+```{r}
+
+# Numerador: w^T SB w
+numerador <- as.numeric(t(w) %*% SB %*% w)
+
+# Denominador: w^T SW w
+denominador <- as.numeric(t(w) %*% SW %*% w)
+
+# Razón de Fisher
+J <- numerador / denominador
+
+# Mostrar resultados
+paste0("Numerador (w^T SB w)      :", numerador)
+paste0("Denominador (w^T SW w)    :", denominador)
+paste0("Razón de Fisher J(w)      :", J)
+```
+
+# Proyectar
+
+## Primer dimensión D1
+
+```{r}
+w_norm
+X
+D1 = as.numeric(X %*% w_norm)
+D1
+```
+
+## Segunda dimensión D2
+
+### Datos centrados
+
+La función genera una matriz basada en la diferencia de los datos medio su media global.
+
+La función *deep()* aplica alguna operación matricial de una matriz o *data.frame* sobre un vector por fila o por columna, la operación es reiterativa, sin necesidad de un ciclo explícito, similar a funciones *apply()*.
+
+Al final los resultados Xc1 y Xc2 deben ser lo mismo solo que cengtrados de diferente manera.
+
+```{r}
+# Datos centrados
+Xc1 <- scale(X, center = TRUE, scale = FALSE)          # centrar por media global
+mu_global <- colMeans(X)
+Xc2 <- sweep(X, 2, mu_global, FUN = "-") # Aplica alguna operación matricial de una matriz/data.frame sobre un vector por fila o por columna, la operación es reitierativa, sin necesidad de un ciclo explícito, similar a funciones apply
+Xc1
+Xc2
+
+Xc <- Xc2   # o bien puede ser Xc <-Xc1
+Xc
+```
+
+## Generar los autovalores
+
+Con la funcion *prcomp()* del modelo *PCA* se contruyen los componentes principales o los autovectores de la matriz de covarianza *S* con los datos centrados.
+
+Se toma en cuenta solo el *pc1* porque en sus variables existe la gran mayoría de la explicación de la varianza, en este caso en la variable ingresos explica en el primer componente alrededor del *95.09%* y la variable gastos médicos explica alrededor del *30.95%*.
+
+En términos del modelo *LDA* como ya se tiene la primera dimension *D1*, es necesario una segunda dimensión *D2*, se toma del primer componente del *PCA* dado que este explica la mayor proporción de la varianza de los datos, además de que el *pc1* es el componente que resulta ser más informativo con respecto a los demás.
+
+```{r}
+
+# Componentes principales de los datos centrados
+pca <- prcomp(Xc, center = FALSE, scale. = FALSE)
+print("Los autovalores o matriz de covarianzas")
+PC <- as.data.frame(pca$rotation)
+print(PC)
+
+print ("pc1")
+pc1 <- PC[,1]
+print(round(pc1, 4))
+
+
+
+```
+
+## El método Gram–Schmidt
+
+De acuerdo con ChatGPt el problema es que no hay garantía de que pc sea ortogonal a w. Si se prpyectos datos sobre w y pc1 directamente, esos ejes podrían estar correlacionados, la representación 2D sería engañosa.
+
+Por lo anterior, se toma a pc1 y se le quita la “parte” que está alineada con.
+
+## Procedimiento para construir vectores ortogonales con R Gram–Schmidt
+
+```{r}
+# --- 1. Definir los vectores de 5 dimensiones ---
+u <- c(2, -1, 3, 0, 4)
+v <- c(1, 2, 1, 3, 1)
+
+# --- 2. Implementar la fórmula de Gram-Schmidt ---
+
+# 2a. Calcular el producto escalar (numerador: u · v)
+# El producto escalar es la suma del producto elemento a elemento
+u_dot_v <- sum(u * v)
+# Resultado: 7
+
+# 2b. Calcular el cuadrado de la norma (denominador: ||v||^2)
+v_norm_sq <- sum(v * v)
+# Resultado: 16
+
+# 2c. Calcular el escalar (coeficiente de la proyección)
+escalar <- u_dot_v / v_norm_sq
+# Resultado: 0.4375
+
+# 2d. Calcular la Proyección Vectorial (Proy_v u)
+proyeccion <- escalar * v
+
+# 2e. Calcular el vector Ortogonal (u_perpendicular = u - Proy_v u)
+u_ortogonal <- u - proyeccion
+
+cat("--- Vectores ---\n")
+cat("Vector V: ", v, "\n")
+cat("Vector U: ", u, "\n")
+cat("\nVector U ortogonal a V (Gram-Schmidt):\n")
+print(u_ortogonal)
+
+# --- 3. Comprobación de Ortogonalidad ---
+# El producto escalar del resultado con V debe ser 0.
+comprobacion <- sum(u_ortogonal * v)
+
+cat("\n--- Comprobación ---\n")
+cat("Producto Escalar (U_ortogonal · V): ", comprobacion, "\n")
+```
+
+
+
+Continuamos ...
+```{r}
+
+# Ortogonalziar
+print("Ortogonalizar")
+orto <- pc1 - sum(pc1 * w_norm) * w_norm
+
+orto
+
+
+
+
+```
+
+## Proyectar
+
+```{r}
+# Proyección sobre el primer componente
+orto <- pc1 - sum(pc1 * w) * w
+
+# Si NO quisieras normalizar w, usarías:
+# v2_star <- pc1 - (sum(pc1 * w) / sum(w * w)) * w
+
+# Normaliza D2 (dirección unitaria)
+D2_antes <- orto / sqrt(sum(orto^2))
+D2_antes
+D2 <- as.numeric(X  %*% D2_antes)  # que hace?
+D2
+```
+
+```{r}
+# Adjuntar al dataset original
+#res <- as.data.frame(D1, D2)
+#res
+```
+
+```{r}
+dimensiones <- data.frame(
+  id = datos$id,
+  clase = clase,
+  D1 = round(D1, 4),
+  D2 = round(D2, 4)
+)
+
+# Dimensiones 
+print(dimensiones)
+
+
+```
+
+
+# Visualizar dispersión de dimensiones
+```{r}
+library(ggplot2)
+ggplot(dimensiones, aes(x = D1, y = D2, color = clase, label = id)) +
+  geom_point(size = 3) +
+  geom_text(vjust = -1, size = 3) +
+  labs(x = "Eje 1: LDA (w)", y = "Eje 2: Ortogonal a w (de PCA)", 
+       title = "Proyección 2D: LDA (2 clases) + eje ortogonal") +
+  theme_minimal()
+```
+
+# Comprobando
+```{r}
+# Asumo que ya tienes:
+# datos (data.frame), cols <- c("edad","ingresos","hijos","gastos_medicos","ejercicio","imc")
+X <- as.matrix(datos[, cols])
+# w = tu vector LDA (normalizado o lo normalizamos aquí)
+w <- c(0.346346, -0.000414, 0.219280, -0.000217, 0.837197, 0.362024)
+w <- w / sqrt(sum(w^2))  # asegurar norma 1
+
+# 1) Matriz de covarianzas global: S = cov(X centrado)
+Xc <- scale(X, center = TRUE, scale = FALSE)
+S  <- cov(Xc)
+
+# 2) PCA: autovectores de S (cada columna es un PC)
+eig <- eigen(S)
+v1  <- eig$vectors[, 1]     # PC1 (dirección de máxima varianza global)
+
+# 3) Ortogonalizar PC1 respecto a w (Gram–Schmidt)
+v2_star <- v1 - sum(v1 * w) * w
+v2 <- v2_star / sqrt(sum(v2_star^2))  # normalizar
+
+# (opcional) Alinear el signo para que z2 salga positivo (estético):
+# si quieres que la mayoría de z2 sean positivos, puedes hacer:
+if (sum((X %*% v2)) < 0) v2 <- -v2
+
+# 4) Proyección
+#   a) Si quieres replicar los valores grandes que observaste (del orden de 1e4~3e4):
+z2 <- as.numeric(X %*% v2)      # usando X sin centrar
+#   b) Si prefieres proyección centrada alrededor de 0:
+# z2 <- as.numeric(Xc %*% v2)   # usando X centrado
+
+# 5) (Opcional) z1 para tener ambos ejes
+z1 <- as.numeric(X %*% w)
+
+# 6) Verificación de ortogonalidad (de direcciones, no de proyecciones):
+cat("w·v2 (debe ~0):", sum(w * v2), "\n")
+
+# 7) Tabla con las dos coordenadas
+proj2d <- data.frame(id = datos$id, clase = datos$clase,
+                     z1_LDA = round(z1, 4),
+                     z2_aux = round(z2, 2))
+print(proj2d)
+
+```
+
