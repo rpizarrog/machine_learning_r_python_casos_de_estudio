@@ -109,7 +109,7 @@ d <- muM - muJ   # vector diferencia de media
 d
 ```
 
-# Solucuión del sistemas de ecuaciones para $S_{w}W$
+# Solución del sistemas de ecuaciones para $S_{w}W$
 
 ```{r}
 # Resolver el sistema
