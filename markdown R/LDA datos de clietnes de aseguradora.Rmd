@@ -1,5 +1,5 @@
 ---
-title: "LDA datos de clietnes de aseguradora"
+title: "LDA datos de clientes de aseguradora"
 author: "RUBEN PIZARRO GURROLA"
 date: "2025-09-23"
 output: word_document
