@@ -1,2 +1,2 @@
-# machine_learning_r_python_casos_de_estudio
+# Modelos para reducción de dimensionalidad
 Recursos para libro
